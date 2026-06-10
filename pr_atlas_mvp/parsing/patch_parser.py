@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from pr_atlas_mvp.models import DiffHunk, DiffLine
+from pr_atlas_mvp.parsing.models import DiffHunk, DiffLine
 
 
 HUNK_HEADER_RE = re.compile(
@@ -71,4 +71,3 @@ def parse_patch(patch: str | None) -> list[DiffHunk]:
             current.lines.append(DiffLine(type="meta", content=line))
 
     return hunks
-

@@ -4,8 +4,8 @@ import json
 import textwrap
 from dataclasses import asdict
 
-from pr_atlas_mvp.db_plan import build_db_rows
-from pr_atlas_mvp.models import ImportBatch
+from pr_atlas_mvp.parsing.db_plan import build_db_rows
+from pr_atlas_mvp.parsing.models import ImportBatch
 
 
 def print_section(title: str) -> None:

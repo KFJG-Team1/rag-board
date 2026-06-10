@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pr_atlas_mvp.models import ImportBatch
+from pr_atlas_mvp.parsing.models import ImportBatch
 
 
 def build_db_rows(batch: ImportBatch) -> dict[str, list[dict[str, Any]]]:

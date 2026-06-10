@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from pr_atlas_mvp.models import ImportBatch, PullRequestFile, PullRequestSnapshot
-from pr_atlas_mvp.patch_parser import parse_patch
+from pr_atlas_mvp.parsing.models import ImportBatch, PullRequestFile, PullRequestSnapshot
+from pr_atlas_mvp.parsing.patch_parser import parse_patch
 
 
 def path_to_ltree(path: str) -> str:
@@ -95,4 +95,3 @@ def normalize_file(
         hunks=parse_patch(patch),
         raw_rest=rest_file,
     )
-

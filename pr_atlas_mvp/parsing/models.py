@@ -55,4 +55,3 @@ class PullRequestSnapshot:
 class ImportBatch:
     repository: dict[str, str]
     pull_request: PullRequestSnapshot
-
