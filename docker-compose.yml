@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: learniverse
+      POSTGRES_PASSWORD: learniverse
+      POSTGRES_DB: learniverse
+    ports:
+      - "6024:5432"
+    volumes:
+      - learniverse_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  learniverse_postgres_data:

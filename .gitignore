@@ -1,0 +1,44 @@
+# 기본은 모두 제외한다.
+/*
+
+# Git 설정 파일
+!.gitignore
+
+# 실행에 필요한 최소 파일
+!.env.example
+!requirements.txt
+!docker-compose.yml
+
+# 애플리케이션 코드와 샘플 데이터
+!/learniverse/
+!/learniverse/**
+!/data/
+!/data/**
+
+# 로컬 환경과 비밀값
+.env
+.env.*
+!.env.example
+.venv/
+
+# 테스트는 로컬 검증용으로만 둔다.
+/tests/
+
+# Python/cache/tooling 산출물
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 로컬 DB 파일
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# 기타 로컬 파일
+.DS_Store
+.learniverse/
