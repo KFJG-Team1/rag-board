@@ -41,3 +41,5 @@ def get_all_posts_from_board(board_id: int):
     with SessionLocal() as db:
         return [post_to_dict(post) for post in select_post(db=db, board_id=board_id)]
 
+if __name__ == "__main__":
+    mcp.run(transport="http", host="127.0.0.1", port=8765)
