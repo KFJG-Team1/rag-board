@@ -1,0 +1,8 @@
+Prepared Remarks
+Operator: Good afternoon and welcome to NVIDIA's earnings call.
+Jensen Huang: Demand for generative AI remains very strong across cloud and enterprise customers.
+Colette Kress: We expect data center revenue to continue growing next quarter.
+
+Question-and-Answer
+Analyst: Can you discuss the sustainability of AI demand?
+Jensen Huang: We expect supply to increase as new capacity comes online.
