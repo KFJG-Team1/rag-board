@@ -362,31 +362,118 @@ MVP에서는 GitHub API 직접 연동과 PostgreSQL 저장을 먼저 구현하�
 
 ## 8. 데이터 흐름
 
-### 8.1 Import Flow
+### 8.1 현재 구현된 Import Flow
 
-1. 사용자가 GitHub repository URL을 입력한다.
-2. 백엔드가 repository metadata를 저장한다.
-3. GitHub API에서 PR 목록을 페이지네이션으로 가져온다.
-4. 각 PR의 기본 metadata를 저장한다.
-5. changed files를 가져와 `pr_files`에 저장한다.
-6. PR title/body/labels/file paths를 합쳐 embedding text를 만든다.
-7. pgvector에 PR embedding을 저장한다.
-8. collision 후보를 계산한다.
-9. cluster와 risk score를 생성한다.
-10. 프론트엔드는 Macro View와 Cluster View를 보여준다.
+현재 구현은 UI나 risk scoring까지 가지 않고, GitHub PR 데이터를 PostgreSQL에 안정적으로 쌓는 import foundation에 집중한다.
 
-### 8.2 Deep Analysis Flow
+```mermaid
+flowchart TD
+    CLI["CLI<br/>import_pr_to_postgres.py"]
+    MODE["--pr 또는 --batch<br/>대상 PR 번호 결정"]
+    GQL["GitHub GraphQL<br/>PR metadata + changedFiles"]
+    REST["GitHub REST<br/>files + patch"]
+    NORMALIZE["normalize_import_batch<br/>ImportBatch 생성"]
+    PATCH["parse_patch<br/>patch -> hunk"]
+    DB["PostgreSQL 저장"]
+
+    CLI --> MODE
+    MODE --> GQL
+    MODE --> REST
+    GQL --> NORMALIZE
+    REST --> NORMALIZE
+    NORMALIZE --> PATCH
+    NORMALIZE --> DB
+```
+
+현재 구현된 범위는 다음과 같다.
+
+```text
+했다:
+  - GitHub public repository의 특정 PR import
+  - GitHub REST PR 목록 페이지에서 여러 PR 번호를 가져오는 batch import
+  - GraphQL changedFiles cursor pagination
+  - REST files pagination
+  - PR metadata 정규화
+  - changed file 정규화
+  - patch 문자열을 diff hunk로 파싱
+  - path를 ltree 검색용 path_tree로 변환
+  - PostgreSQL schema 생성
+  - repositories, pull_requests, file_paths, pr_files, pr_file_hunks, raw_payloads 저장
+
+아직 안 했다:
+  - 저장소 전체 페이지 자동 순회
+  - collision edge 계산
+  - risk score 계산
+  - cluster 생성
+  - UI 시각화
+  - report board
+  - pgvector/RAG
+```
+
+### 8.2 제품 전체 Data Flow
+
+최종 제품은 import된 데이터를 기반으로 path layer, PR event, hunk range를 분석해 collision atlas를 만든다.
+
+```mermaid
+flowchart TD
+    Import["Repository Import"]
+    PathLayer["file_paths<br/>저장소 경로 지도 레이어"]
+    PREvents["pr_files<br/>PR별 변경 이벤트"]
+    Hunks["pr_file_hunks<br/>라인 범위"]
+    Score["Collision Scoring<br/>shared file + hunk overlap + heuristic"]
+    Cluster["Collision Clustering"]
+    Atlas["Collision Atlas UI"]
+    Report["Merge Risk Report"]
+    RAG["Past Report / Resolution RAG"]
+
+    Import --> PathLayer
+    Import --> PREvents
+    PREvents --> Hunks
+    PathLayer --> Score
+    PREvents --> Score
+    Hunks --> Score
+    Score --> Cluster
+    Cluster --> Atlas
+    Atlas --> Report
+    Report --> RAG
+    RAG --> Score
+```
+
+이 흐름에서 `file_paths`는 단순한 중복 제거 테이블이 아니다. 저장소의 파일 경로를 반투명한 배경 지도처럼 두고, 여러 PR이 어느 경로를 지나갔는지 표시하기 위한 기준 레이어다.
+
+```mermaid
+flowchart TD
+    subgraph Map["Path Map Layer"]
+        P1["src/api/users.py"]
+        P2["src/auth/service.py"]
+        P3["migrations/20260601_add_user_status.sql"]
+    end
+
+    subgraph PRLayer["PR Event Layer"]
+        A["PR #1201<br/>auth refactor"]
+        B["PR #1215<br/>signup API"]
+        C["PR #1220<br/>users migration"]
+    end
+
+    A --> P2
+    B --> P1
+    B --> P2
+    C --> P3
+    C --> P1
+```
+
+### 8.3 Deep Analysis Flow
 
 1. 사용자가 특정 PR 또는 cluster를 선택한다.
-2. 백엔드가 관련 PR pair를 찾는다.
-3. 필요한 경우 diff hunk를 추가로 가져온다.
-4. hunk line range, 파일 유형, 키워드를 분석한다.
-5. risk explanation을 생성한다.
-6. 과거 유사 report를 RAG로 검색한다.
-7. AI가 요약과 추천 merge 순서를 생성한다.
+2. 백엔드가 같은 `base_ref`를 대상으로 하는 관련 PR pair를 찾는다.
+3. `pr_files.file_path_id`와 `path_tree`를 이용해 같은 파일/디렉토리 변경을 찾는다.
+4. `pr_file_hunks`의 line range overlap을 계산한다.
+5. 파일 유형, 경로 패턴, label, title/body 키워드로 위험도를 보정한다.
+6. 과거 report와 resolution note를 RAG로 검색한다.
+7. AI가 위험 이유와 추천 merge 순서를 생성한다.
 8. 결과를 merge risk report로 저장한다.
 
-### 8.3 Board Flow
+### 8.4 Board Flow
 
 1. 분석 결과가 게시글로 생성된다.
 2. 사용자는 report에 댓글이나 해결 메모를 남긴다.
@@ -395,111 +482,180 @@ MVP에서는 GitHub API 직접 연동과 PostgreSQL 저장을 먼저 구현하�
 
 ## 9. PostgreSQL 설계
 
-### 주요 테이블
+### 9.1 현재 구현된 테이블
 
-#### repositories
+현재 구현된 DB는 collision 분석을 바로 계산하기 전 단계의 import schema다. GitHub PR을 분석 가능한 단위인 repository, PR, path, PR file event, hunk로 나눠 저장한다.
 
-- id
-- owner
-- name
-- default_branch
-- html_url
-- last_synced_at
+```mermaid
+erDiagram
+    REPOSITORIES ||--o{ PULL_REQUESTS : contains
+    REPOSITORIES ||--o{ FILE_PATHS : owns
+    PULL_REQUESTS ||--o{ PR_FILES : changes
+    FILE_PATHS ||--o{ PR_FILES : referenced_by
+    PR_FILES ||--o{ PR_FILE_HUNKS : has
 
-#### pull_requests
+    REPOSITORIES {
+        bigint id PK
+        text repo_key UK
+        text owner
+        text name
+    }
 
-- id
-- repository_id
-- github_pr_id
-- number
-- title
-- body
-- state
-- author_login
-- base_branch
-- head_branch
-- html_url
-- additions
-- deletions
-- changed_files_count
-- comments_count
-- review_comments_count
-- created_at
-- updated_at
-- merged_at
+    PULL_REQUESTS {
+        bigint id PK
+        text pr_key UK
+        bigint repository_id FK
+        int number
+        text title
+        text url
+        text state
+        text base_ref
+        text head_ref
+        text base_sha
+        text head_sha
+        timestamptz updated_at
+        text_array labels
+        jsonb raw_graphql
+    }
 
-#### pr_files
+    FILE_PATHS {
+        bigint id PK
+        bigint repository_id FK
+        text path
+        ltree path_tree
+    }
 
-- id
-- pull_request_id
-- path
-- directory
-- extension
-- status
-- additions
-- deletions
-- patch_summary
-- is_docs
-- is_config
-- is_migration
-- is_lockfile
+    PR_FILES {
+        bigint id PK
+        text pr_file_key UK
+        bigint pull_request_id FK
+        bigint file_path_id FK
+        text path
+        ltree path_tree
+        text status
+        int additions
+        int deletions
+        int changes
+        text patch
+        jsonb raw_rest
+    }
 
-#### collision_edges
+    PR_FILE_HUNKS {
+        bigint id PK
+        text hunk_key UK
+        bigint pr_file_id FK
+        int hunk_index
+        int old_start
+        int old_lines
+        int new_start
+        int new_lines
+        text header
+        int line_count
+        jsonb hunk_json
+    }
 
-- id
-- repository_id
-- source_pr_id
-- target_pr_id
-- risk_level
-- risk_score
-- shared_files_count
-- shared_directories
-- reasons
-- created_at
+    RAW_PAYLOADS {
+        bigint id PK
+        text entity_type
+        text entity_key
+        text source
+        jsonb payload
+    }
+```
 
-#### collision_clusters
+### 9.2 테이블 분리 기준
 
-- id
-- repository_id
-- name
-- cluster_type
-- risk_level
-- pr_count
-- summary
-- created_at
+```mermaid
+flowchart TD
+    A["정보가 있다"] --> B{"수명이 독립적인가?"}
+    B -- yes --> T["테이블로 분리"]
+    B -- no --> C{"한 부모에 여러 개 붙는가?"}
+    C -- yes --> T
+    C -- no --> D{"검색/시각화의 기준 축인가?"}
+    D -- yes --> T
+    D -- no --> COL["부모 테이블의 컬럼"]
+```
 
-#### merge_reports
+이 기준으로 현재 테이블을 해석하면 다음과 같다.
 
-- id
-- repository_id
-- title
-- target_branch
-- report_type
-- summary
-- recommendation
-- status
-- created_at
+```text
+repositories:
+  저장소 자체. 여러 PR과 파일 경로의 부모가 된다.
 
-#### resolution_notes
+pull_requests:
+  PR 하나의 metadata snapshot.
+  base_ref, head_ref, head_sha, labels는 이후 필터링과 분석 기준이 되므로 저장한다.
 
-- id
-- merge_report_id
-- author
-- body
-- outcome
-- created_at
+file_paths:
+  저장소 파일 경로 지도 레이어.
+  여러 PR이 지나가는 공통 좌표이며, path_tree로 디렉토리 검색이 가능하다.
 
-#### embeddings
+pr_files:
+  특정 PR이 특정 path 위에 남긴 변경 이벤트.
+  additions, deletions, status, patch는 PR snapshot에 종속된다.
 
-- id
-- source_type
-- source_id
-- content
-- embedding
-- metadata
-- created_at
+pr_file_hunks:
+  patch를 충돌 계산 가능한 line range로 쪼갠 분석 단위.
+```
 
-pgvector를 사용해 PR, report, resolution note를 검색한다.
+`file_paths`와 `pr_files`는 일부 값이 겹친다. 이 중복은 현재 MVP에서 의도적으로 허용한다.
+
+```text
+file_paths.path / path_tree:
+  장기적으로 유지되는 path map layer
+
+pr_files.path / path_tree:
+  PR snapshot 조회 편의와 당시 GitHub 응답 보존
+
+pr_files.file_path_id:
+  같은 path 위에 여러 PR event가 쌓인다는 관계 표현
+```
+
+### 9.3 현재 보존하는 원본 데이터
+
+현재는 정규화 컬럼 외에 원본 응답도 저장한다.
+
+```text
+pull_requests.raw_graphql:
+  PR metadata와 changedFiles GraphQL 원본
+
+pr_files.raw_rest:
+  파일별 REST 응답 원본
+
+raw_payloads:
+  entity_type, entity_key, source 기준의 원본 payload 보관소
+```
+
+`raw_payloads`는 당장 collision 계산에 필수는 아니다. 하지만 API 응답이 바뀌었을 때 정규화 로직을 다시 검증하거나, 누락된 필드를 재처리하거나, import 결과를 디버깅할 때 필요하다. 따라서 현재 설계에서는 단순성보다 재현성과 추적성을 우선해 유지한다.
+
+### 9.4 다음 단계에 추가할 테이블
+
+아래 테이블들은 아직 구현되지 않았다. 현재 import schema 위에 추가될 분석/제품 레이어다.
+
+```mermaid
+flowchart TD
+    Current["현재 구현<br/>repositories, pull_requests, file_paths, pr_files, pr_file_hunks"]
+    Edges["collision_edges<br/>PR pair 위험 관계"]
+    Clusters["collision_clusters<br/>위험 관계 묶음"]
+    Reports["merge_reports<br/>분석 게시글"]
+    Notes["resolution_notes<br/>해결 메모"]
+    Embeddings["embeddings<br/>pgvector 검색"]
+
+    Current --> Edges
+    Edges --> Clusters
+    Clusters --> Reports
+    Reports --> Notes
+    Reports --> Embeddings
+    Notes --> Embeddings
+```
+
+예상 역할:
+
+- `collision_edges`: 두 PR 사이의 shared file, shared directory, hunk overlap, risk score 저장
+- `collision_clusters`: 여러 collision edge를 기능 영역이나 디렉토리 기준으로 묶은 결과 저장
+- `merge_reports`: 특정 시점의 분석 결과와 추천 merge 순서 저장
+- `resolution_notes`: 사람이 남긴 해결 과정과 실제 outcome 저장
+- `embeddings`: PR/report/resolution note를 pgvector로 유사 검색하기 위한 벡터 저장
 
 ## 10. 시각화 설계
 
@@ -613,30 +769,75 @@ React Flow는 상세 그래프와 사용자 인터랙션에 적합하다. 대규
 
 ## 12. MVP 범위
 
-### 반드시 포함
+MVP는 한 번에 완성하지 않는다. 현재는 **MVP-0: import foundation**이 구현되어 있고, 다음 단계에서 **MVP-1: collision atlas prototype**으로 올라간다.
 
-- GitHub public repository import
-- PR 목록 페이지네이션 수집
-- PR changed files 수집
-- directory heatmap
-- PR 간 shared file/shared directory 기반 collision edge 생성
-- risk score 휴리스틱
+```mermaid
+flowchart LR
+    M0["MVP-0<br/>GitHub PR import + PostgreSQL 저장<br/>현재 구현됨"]
+    M1["MVP-1<br/>collision edge + path atlas<br/>다음 구현"]
+    M2["MVP-2<br/>report board + RAG<br/>이후 구현"]
+    M3["Product<br/>GitHub App + private repo + automation"]
+
+    M0 --> M1 --> M2 --> M3
+```
+
+### 12.1 MVP-0: 현재 구현됨
+
+- GitHub public repository 대상 import
+- 단일 PR import
+- REST PR 목록 페이지 기반 batch import
+- GraphQL PR metadata 수집
+- GraphQL changedFiles cursor pagination
+- REST changed files와 patch pagination 수집
+- PR metadata, labels, base/head branch, SHA 저장
+- changed file 저장
+- `path_tree` 생성과 PostgreSQL `ltree` 저장
+- diff patch를 hunk line range로 파싱
+- PostgreSQL schema 생성
+- `repositories`, `pull_requests`, `file_paths`, `pr_files`, `pr_file_hunks`, `raw_payloads` 저장
+- 같은 PR 재수입 시 파일 snapshot 삭제 후 재삽입
+
+### 12.2 MVP-1: 다음 구현 목표
+
+- 저장소 전체 PR 페이지 자동 순회
+- `file_paths`를 기준으로 directory/path heatmap 계산
+- PR 간 shared file/shared directory 기반 collision candidate 생성
+- `pr_file_hunks`의 line range overlap 기반 high-risk pair 계산
+- `base_ref`, `labels`, `path_tree` 기반 필터링
+- 가장 단순한 risk score 휴리스틱
+- path layer 위에 PR 변경 이벤트를 표시하는 Collision Atlas 화면
+
+MVP-1의 핵심 화면은 `file_paths`를 반투명한 배경 지도처럼 두고, 그 위에 `pr_files`를 PR별 변경 이벤트로 얹는 구조다.
+
+```mermaid
+flowchart TD
+    Path["file_paths<br/>저장소 path map"]
+    PRFiles["pr_files<br/>PR event overlay"]
+    Hunks["pr_file_hunks<br/>line range"]
+    Risk["risk score"]
+    UI["Collision Atlas UI"]
+
+    Path --> UI
+    PRFiles --> UI
+    PRFiles --> Risk
+    Hunks --> Risk
+    Risk --> UI
+```
+
+### 12.3 MVP-2: 이후 구현
+
 - Cluster View
-- PR Collision Graph
+- PR Collision Graph 상세 화면
 - Merge Risk Report 게시판
 - resolution note 작성
-- pgvector 기반 유사 PR/report 검색
-
-### 있으면 좋음
-
-- diff hunk line range 분석
-- 주석/문서/공백 변경 필터
 - AI risk explanation
 - merge order recommendation
+- pgvector 기반 유사 PR/report 검색
+- 주석/문서/공백 변경 필터
 - GitHub PR comment 가져오기
 - local git merge simulation
 
-### MVP 이후
+### 12.4 MVP 이후
 
 - GitHub App 설치 방식
 - private repository 지원
@@ -792,23 +993,44 @@ RAG는 과거 해결 사례 검색을 위해 사용한다. MCP는 GitHub, Postgr
 - 핵심 MCP: GitHub/PostgreSQL/local Git 도구 연동
 - 핵심 원칙: 자동 merge가 아니라 merge planning 지원
 
-## 18. 1차 구현 범위
+## 18. 구현 로드맵
 
-처음부터 모든 기능을 만들지 않는다. 1차 구현은 "이 주제가 진짜 작동한다"는 것을 보여주는 데 집중한다.
+처음부터 모든 기능을 만들지 않는다. 지금까지의 1차 구현은 "GitHub PR 데이터를 충돌 분석 가능한 형태로 쌓을 수 있는가"를 증명하는 데 집중했다. 다음 구현은 "쌓인 데이터를 지도처럼 볼 수 있는가"를 증명한다.
 
-### 18.1 목표
+```mermaid
+flowchart TD
+    Done["1차 기반 구현 완료<br/>GitHub PR import + PostgreSQL 저장"]
+    Next["다음 데모<br/>path layer + collision candidate"]
+    Later["이후 확장<br/>report board + RAG + AI recommendation"]
 
-사용자가 GitHub public repository를 입력하면, 열린 PR들을 수집하고 다음을 보여준다.
+    Done --> Next --> Later
+```
+
+### 18.1 지금까지 구현한 것
+
+- 사용자가 CLI로 GitHub owner/repo/PR 번호를 지정해 PR을 수집한다.
+- `--batch`로 REST PR 목록 페이지에서 여러 PR 번호를 가져와 순서대로 수집한다.
+- GraphQL로 PR metadata와 changed files를 가져온다.
+- REST로 파일별 patch를 가져온다.
+- patch를 hunk line range로 파싱한다.
+- `file_paths`를 저장소 path map layer로 저장한다.
+- `pr_files`를 PR별 변경 이벤트로 저장한다.
+- `pr_file_hunks`를 충돌 계산 가능한 line range로 저장한다.
+- 원본 GraphQL/REST payload를 보존한다.
+
+### 18.2 다음 목표
+
+사용자가 GitHub public repository를 입력하거나 CLI로 import한 데이터가 있으면, 저장된 PR들을 기반으로 다음을 보여준다.
 
 - PR이 어느 디렉토리에 몰려 있는지
 - 어떤 PR들이 같은 파일/디렉토리를 건드리는지
-- 어떤 PR pair가 충돌 위험이 높은지
-- 위험 PR pair를 그래프로 볼 수 있는지
-- 분석 결과를 report 게시글로 저장할 수 있는지
+- 어떤 PR pair가 같은 hunk range 주변을 건드리는지
+- `file_paths` 위에 여러 PR 변경 이벤트가 어떻게 지나가는지
+- 어떤 PR pair를 먼저 봐야 하는지
 
-### 18.2 제외할 것
+### 18.3 제외할 것
 
-1차 구현에서는 다음을 욕심내지 않는다.
+다음 데모에서는 다음을 욕심내지 않는다.
 
 - 완전한 semantic merge 분석
 - 자동 conflict resolution
@@ -818,20 +1040,19 @@ RAG는 과거 해결 사례 검색을 위해 사용한다. MCP는 GitHub, Postgr
 - 실제 merge 실행
 - CI/CD 자동 연동
 
-### 18.3 첫 데모 시나리오
+### 18.4 다음 데모 시나리오
 
-1. 사용자가 repository URL을 입력한다.
-2. 서비스가 open PR 목록을 가져온다.
-3. Dashboard에 open PR 수, high risk pair 수, 변경 집중 디렉토리를 보여준다.
-4. 사용자가 `Collision Atlas` 탭을 연다.
-5. PR cluster들이 그래프로 표시된다.
-6. `High Risk` cluster를 클릭한다.
-7. 관련 PR과 공통 파일이 표시된다.
-8. AI가 "왜 이 cluster가 위험한지" 요약한다.
-9. 사용자가 이 분석을 merge risk report로 저장한다.
-10. report에 해결 메모를 남긴다.
+1. 사용자가 repository와 PR import 범위를 지정한다.
+2. 서비스가 PR metadata, changed files, patch hunks를 수집한다.
+3. Dashboard에 open PR 수와 변경 파일 수를 보여준다.
+4. Path Atlas 화면에 `file_paths` 기반 경로 지도를 그린다.
+5. 각 PR의 `pr_files`가 경로 지도 위에 overlay로 표시된다.
+6. 같은 파일을 건드리는 PR pair를 표시한다.
+7. 같은 hunk range 주변을 건드리는 PR pair를 더 높은 위험도로 표시한다.
+8. 사용자가 PR pair를 클릭하면 어떤 파일과 line range가 겹치는지 본다.
+9. 이후 단계에서 이 분석을 merge risk report로 저장한다.
 
-### 18.4 추천 샘플 저장소
+### 18.5 추천 샘플 저장소
 
 데모용으로는 PR이 많은 대형 저장소를 사용할 수 있다.
 

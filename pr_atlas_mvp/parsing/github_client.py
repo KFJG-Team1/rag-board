@@ -44,8 +44,48 @@ def request_json(
 
 
 def fetch_pr_graphql(owner: str, repo: str, pr_number: int, token: str) -> dict[str, Any]:
+    repository = fetch_pr_graphql_page(owner, repo, pr_number, token)
+    pr = repository["pullRequest"]
+    changed_files = pr["changedFiles"]
+    nodes = list(changed_files.get("nodes") or [])
+    page_info = changed_files.get("pageInfo") or {}
+
+    while page_info.get("hasNextPage"):
+        cursor = page_info.get("endCursor")
+        if not cursor:
+            raise RuntimeError("GraphQL changedFiles 다음 페이지 cursor가 없습니다.")
+
+        next_repository = fetch_pr_graphql_page(
+            owner,
+            repo,
+            pr_number,
+            token,
+            after=cursor,
+        )
+        next_changed_files = next_repository["pullRequest"]["changedFiles"]
+        nodes.extend(next_changed_files.get("nodes") or [])
+        page_info = next_changed_files.get("pageInfo") or {}
+
+    changed_files["nodes"] = nodes
+    changed_files["pageInfo"] = page_info
+    return repository
+
+
+def fetch_pr_graphql_page(
+    owner: str,
+    repo: str,
+    pr_number: int,
+    token: str,
+    *,
+    after: str | None = None,
+) -> dict[str, Any]:
     query = """
-    query FetchOnePullRequest($owner: String!, $repo: String!, $pr: Int!) {
+    query FetchOnePullRequest(
+      $owner: String!
+      $repo: String!
+      $pr: Int!
+      $filesAfter: String
+    ) {
       repository(owner: $owner, name: $repo) {
         id
         name
@@ -75,7 +115,7 @@ def fetch_pr_graphql(owner: str, repo: str, pr_number: int, token: str) -> dict[
               name
             }
           }
-          changedFiles: files(first: 100) {
+          changedFiles: files(first: 100, after: $filesAfter) {
             nodes {
               path
               additions
@@ -93,7 +133,12 @@ def fetch_pr_graphql(owner: str, repo: str, pr_number: int, token: str) -> dict[
     """
     payload = {
         "query": query,
-        "variables": {"owner": owner, "repo": repo, "pr": pr_number},
+        "variables": {
+            "owner": owner,
+            "repo": repo,
+            "pr": pr_number,
+            "filesAfter": after,
+        },
     }
     result = request_json(GITHUB_GRAPHQL_URL, token=token, method="POST", body=payload)
 
