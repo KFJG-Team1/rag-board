@@ -9,7 +9,7 @@ def build_db_rows(batch: ImportBatch) -> dict[str, list[dict[str, Any]]]:
     owner = batch.repository["owner"]
     repo = batch.repository["name"]
     pr = batch.pull_request
-    repository_key = f"{owner}/{repo}"
+    repository_key = batch.repository["id"]
     pr_key = f"{repository_key}#{pr.number}"
 
     rows: dict[str, list[dict[str, Any]]] = {

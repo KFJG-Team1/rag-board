@@ -51,7 +51,14 @@ def normalize_import_batch(
         raw_graphql=pr,
     )
 
-    return ImportBatch(repository={"owner": owner, "name": repo}, pull_request=snapshot)
+    return ImportBatch(
+        repository={
+            "id": graphql_repository["id"],
+            "owner": owner,
+            "name": repo,
+        },
+        pull_request=snapshot,
+    )
 
 
 def collect_ordered_paths(

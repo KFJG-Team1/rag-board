@@ -33,7 +33,7 @@ def store_import_batch(
 ) -> StoreResult:
     owner = batch.repository["owner"]
     repo = batch.repository["name"]
-    repository_key = f"{owner}/{repo}"
+    repository_key = batch.repository["id"]
     pr = batch.pull_request
     pr_key = f"{repository_key}#{pr.number}"
 
