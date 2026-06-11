@@ -109,6 +109,27 @@ def fetch_pr_graphql(owner: str, repo: str, pr_number: int, token: str) -> dict[
     return repository
 
 
+def fetch_pr_numbers_rest(
+    owner: str,
+    repo: str,
+    token: str,
+    *,
+    state: str = "all",
+    page: int = 1,
+    per_page: int = 100,
+) -> list[int]:
+    params = urllib.parse.urlencode(
+        {"state": state, "per_page": per_page, "page": page}
+    )
+    url = f"{GITHUB_REST_URL}/repos/{owner}/{repo}/pulls?{params}"
+    items = request_json(url, token=token)
+
+    if not isinstance(items, list):
+        raise RuntimeError("REST PR 목록 응답 구조가 예상과 다릅니다.")
+
+    return [int(item["number"]) for item in items]
+
+
 def fetch_pr_files_rest(
     owner: str,
     repo: str,
