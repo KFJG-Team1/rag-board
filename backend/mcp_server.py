@@ -2,6 +2,7 @@ from fastmcp import FastMCP
 from sqlalchemy import select
 
 from backend.db import Post, SessionLocal, User
+from backend.db import select_student_profile
 
 mcp = FastMCP()
 
@@ -50,7 +51,7 @@ def post_to_dict(post: Post) -> dict:
 
 @mcp.tool
 def get_all_users_data():
-    """학생 기본 정보, 프로필, 팀 배정 정보를 가져오기."""
+    """학생 기본 정보, 프로필, 팀 배정 정보를 가져오기. 팀 매치 만들때 해당 데이터를 활용한다."""
     with SessionLocal() as db:
         users = db.scalars(select(User).order_by(User.classroom, User.id)).all()
         return [user_to_dict(user) for user in users]
@@ -64,6 +65,8 @@ def get_all_posts_from_board(board_id: int):
             select(Post).where(Post.board_id == board_id).order_by(Post.created_at)
         ).all()
         return [post_to_dict(post) for post in posts]
+
+
 
 
 if __name__ == "__main__":
