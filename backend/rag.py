@@ -1,4 +1,3 @@
-import chunk
 import os
 from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader
@@ -10,8 +9,18 @@ from langchain_core.documents import Document
 
 import hashlib
 
-from db import (RagDocument, select_rag_document, select_user, select_post,
-                select_board, select_team, select_team_member, select_comment, insert_rag_document, delete_rag_document)
+from backend.db import (
+    RagDocument,
+    delete_rag_document,
+    insert_rag_document,
+    select_board,
+    select_comment,
+    select_post,
+    select_rag_document,
+    select_team,
+    select_team_member,
+    select_user,
+)
 from sqlalchemy.orm import Session
 
 
@@ -124,7 +133,7 @@ def split_document(document: Document) -> list[Document]:
     return splitter.split_documents([document])
 
 
-def index_user_profile(db: Session, user_id: int) -> list[RagDocument]:
+def index_student_profile(db: Session, user_id: int) -> list[RagDocument]:
     """ DB에서 user_id에 해당하는 유저 정보를 가져와서
         그 유저 프로필을 RAG 검색용 문서로 만들고,
         Chroma 벡터DB에 저장한 뒤,
@@ -136,6 +145,11 @@ def index_user_profile(db: Session, user_id: int) -> list[RagDocument]:
     user = user_db_data[0]
     document = user_to_document(user)
     chunks = split_document(document)
+
+    if not is_chunks_diff(db=db, source_type="student_profile", source_id=user_id, chunks=chunks):
+        return select_rag_document(db=db, source_type="student_profile", source_id=user_id)
+
+    delete_indexed_source(db=db, source_type="student_profile", source_id=user_id)
 
     doc_ids = [ make_vector_doc_id("student_profile", user_id, idx) for idx, _ in enumerate(chunks)]
 
@@ -165,6 +179,11 @@ def index_post(db: Session, post_id: int) -> list[RagDocument]:
     document = post_to_document(post)
     chunks = split_document(document)
 
+    if not is_chunks_diff(db=db, source_type="post", source_id=post_id, chunks=chunks):
+        return select_rag_document(db=db, source_type="post", source_id=post_id)
+
+    delete_indexed_source(db=db, source_type="post", source_id=post_id)
+
     post_ids = [make_vector_doc_id("post", post_id, idx) for idx, _ in enumerate(chunks)]
 
     vector_store = get_vector_store()
@@ -192,6 +211,11 @@ def index_comment(db: Session, comment_id:int) -> list[RagDocument]:
     comment = comment_db_data[0]
     document = comment_to_document(comment)
     chunks = split_document(document)
+
+    if not is_chunks_diff(db=db, source_type="comment", source_id=comment_id, chunks=chunks):
+        return select_rag_document(db=db, source_type="comment", source_id=comment_id)
+
+    delete_indexed_source(db=db, source_type="comment", source_id=comment_id)
 
     comment_ids = [make_vector_doc_id("comment", comment_id, idx) for idx, _ in enumerate(chunks)]
 
@@ -221,17 +245,18 @@ def delete_indexed_source(db: Session, source_type: str, source_id: int):
         for doc in indexed_docs
     ]
 
-    vector_store = get_vector_store()
-    vector_store.delete(ids=vector_doc_id)
+    if vector_doc_id:
+        vector_store = get_vector_store()
+        vector_store.delete(ids=vector_doc_id)
 
     for doc in indexed_docs:
         delete_rag_document(db, doc.id)
 
 
-def reindex_all_students(db: Session):
+def reindex_all_users(db: Session):
     users = select_user(db=db)
     for user in users:
-        index_user_profile(db=db, user_id=user.id)
+        index_student_profile(db=db, user_id=user.id)
 
 
 def reindex_all_board_documents(db: Session):
@@ -239,3 +264,52 @@ def reindex_all_board_documents(db: Session):
     for post in posts:
         index_post(db=db, post_id=post.id)
 
+
+def search_user_docs(query: str, classroom: int, user_ids: list[int] | None = None, k: int=5) -> list[Document]:
+    vector_store = get_vector_store()
+
+    # 학생 프로필 청크만 검색
+    search_filter = {
+        "$and": [
+            {"source_type": "student_profile"},
+            {"classroom": classroom},
+        ]
+    }
+
+    documents = vector_store.similarity_search(
+        query=query,
+        k=k,
+        filter=search_filter,
+    )
+
+    if user_ids is not None:
+        documents = [
+            document for document in documents
+            if document.metadata.get("user_id") in user_ids
+        ]
+
+    return documents
+
+# 최소구현 완료 후 작성 예정
+def search_board_docs():
+    pass
+
+
+# 중복 인덱싱 방지용
+def is_chunks_diff(db: Session, source_type: str,
+                   source_id: int, chunks: list[Document]) -> bool:
+    rag_docs = select_rag_document(db=db, source_type=source_type, source_id=source_id)
+    if len(rag_docs) != len(chunks):
+        return True
+
+    hash_by_chunk_index = {
+        doc.chunk_index: doc.content_hash for doc in rag_docs
+    }
+
+    for idx, chunk in enumerate(chunks):
+        new_hash = make_content_hash(chunk.page_content)
+        old_hash = hash_by_chunk_index.get(idx)
+        if old_hash != new_hash:
+            return True
+
+    return False
