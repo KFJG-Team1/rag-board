@@ -32,6 +32,10 @@ chroma/
 chroma_db/
 chroma_langchain_db/
 .chromadb/
+backend/chroma/
+backend/chroma_db/
+backend/chroma_langchain_db/
+backend/.chromadb/
 
 # Uploaded/generated local data
 uploads/
@@ -51,9 +55,9 @@ build/
 coverage/
 
 # Frontend environment files
-frontend/.env
-frontend/.env.*
-!frontend/.env.example
+src/.env
+src/.env.*
+!src/.env.example
 
 # IDE/editor
 .idea/
@@ -66,3 +70,4 @@ frontend/.env.*
 Thumbs.db
 
 arch.md
+study.md
