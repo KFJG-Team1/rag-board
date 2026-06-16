@@ -40,7 +40,8 @@ def store_import_batch(
     if create_schema:
         ensure_schema(session)
 
-    with session.begin():
+    transaction = session.begin_nested() if session.in_transaction() else session.begin()
+    with transaction:
         repository = upsert_repository(session, repository_key, owner, repo)
         pull_request = upsert_pull_request(
             session,
@@ -51,7 +52,12 @@ def store_import_batch(
         )
 
         delete_pr_file_snapshot(session, pull_request, pr_key)
-        upsert_raw_payload(session, "pull_request", pr_key, "github_graphql", pr.raw_graphql)
+        pull_request_source = (
+            "github_rest_pr"
+            if pr.raw_graphql.get("_source") == "github_rest"
+            else "github_graphql"
+        )
+        upsert_raw_payload(session, "pull_request", pr_key, pull_request_source, pr.raw_graphql)
 
         hunk_count = 0
         for file in pr.files:

@@ -13,5 +13,19 @@ psycopg[binary]>=3.2,<4
 # API 응답과 내부 자료구조 검증을 더 엄격하게 만들 때 사용
 pydantic>=2.8,<3
 
+# 로컬 frontend가 호출할 HTTP API 서버
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+
 # 콘솔 출력과 디버깅 로그를 읽기 좋게 만들 때 사용
 rich>=13.9,<15
+
+# project-role-map.yaml 파싱
+PyYAML>=6.0,<7
+
+# RAG 분석 workflow와 evidence-bound document/structured output 경계
+langgraph>=1.2,<2
+langchain-core>=1.4,<2
+openai>=2.0,<3
+openai-agents>=0.6,<1
+mcp>=1.27,<2

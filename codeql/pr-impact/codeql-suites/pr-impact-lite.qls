@@ -1,0 +1,4 @@
+- query: queries/SymbolDefinitions.ql
+- query: queries/ClassDefinitions.ql
+- query: queries/PublicSurface.ql
+- query: queries/PublicSurfaceClasses.ql

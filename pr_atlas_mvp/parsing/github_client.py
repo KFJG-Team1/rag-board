@@ -15,17 +15,18 @@ USER_AGENT = "pr-collision-atlas-mvp"
 def request_json(
     url: str,
     *,
-    token: str,
+    token: str | None = None,
     method: str = "GET",
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any] | list[Any]:
     data = None
     headers = {
         "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {token}",
         "User-Agent": USER_AGENT,
         "X-GitHub-Api-Version": "2022-11-28",
     }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     if body is not None:
         data = json.dumps(body).encode("utf-8")
@@ -41,6 +42,18 @@ def request_json(
         raise RuntimeError(
             f"GitHub API 요청 실패: {error.code} {error.reason}\n{payload}"
         ) from error
+
+
+def fetch_repository_rest(
+    owner: str,
+    repo: str,
+    token: str | None = None,
+) -> dict[str, Any]:
+    url = f"{GITHUB_REST_URL}/repos/{owner}/{repo}"
+    payload = request_json(url, token=token)
+    if not isinstance(payload, dict):
+        raise RuntimeError("REST repository 응답 구조가 예상과 다릅니다.")
+    return payload
 
 
 def fetch_pr_graphql(owner: str, repo: str, pr_number: int, token: str) -> dict[str, Any]:
@@ -157,7 +170,7 @@ def fetch_pr_graphql_page(
 def fetch_pr_numbers_rest(
     owner: str,
     repo: str,
-    token: str,
+    token: str | None = None,
     *,
     state: str = "all",
     page: int = 1,
@@ -175,11 +188,24 @@ def fetch_pr_numbers_rest(
     return [int(item["number"]) for item in items]
 
 
+def fetch_pr_rest(
+    owner: str,
+    repo: str,
+    pr_number: int,
+    token: str | None = None,
+) -> dict[str, Any]:
+    url = f"{GITHUB_REST_URL}/repos/{owner}/{repo}/pulls/{pr_number}"
+    payload = request_json(url, token=token)
+    if not isinstance(payload, dict):
+        raise RuntimeError("REST PR 응답 구조가 예상과 다릅니다.")
+    return payload
+
+
 def fetch_pr_files_rest(
     owner: str,
     repo: str,
     pr_number: int,
-    token: str,
+    token: str | None = None,
 ) -> list[dict[str, Any]]:
     files: list[dict[str, Any]] = []
     page = 1

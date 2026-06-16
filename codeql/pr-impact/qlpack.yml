@@ -1,0 +1,4 @@
+name: pr-collision-atlas/python-pr-impact
+version: 0.0.1
+dependencies:
+  codeql/python-all: "*"

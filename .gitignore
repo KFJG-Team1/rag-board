@@ -10,6 +10,7 @@ dist/
 .venv/
 venv/
 env/
+node_modules/
 
 # 로컬 설정/비밀값
 .env
@@ -29,6 +30,7 @@ htmlcov/
 .idea/
 
 # 실험 출력물
+.atlas/
 *.log
 *.tmp
 import-batch.json

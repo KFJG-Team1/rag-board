@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     DDL,
     ForeignKey,
+    Float,
     Identity,
     Index,
     Integer,
@@ -63,6 +64,45 @@ class Repository(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    login_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    password: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    sessions: Mapped[list[AuthSession]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    comments: Mapped[list[ChangeComment]] = relationship(
+        back_populates="author",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = (Index("idx_auth_sessions_token", "session_token"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    session_token: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="sessions")
 
 
 class PullRequest(Base):
@@ -175,6 +215,36 @@ class PullRequestFile(Base):
     )
 
 
+class ChangeComment(Base):
+    __tablename__ = "change_comments"
+    __table_args__ = (
+        Index("idx_change_comments_pr_file", "pull_request_id", "file_path_id"),
+        Index("idx_change_comments_author", "author_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    pull_request_id: Mapped[int] = mapped_column(
+        ForeignKey("pull_requests.id", ondelete="CASCADE"), nullable=False
+    )
+    file_path_id: Mapped[int] = mapped_column(
+        ForeignKey("file_paths.id", ondelete="CASCADE"), nullable=False
+    )
+    author_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    pull_request: Mapped[PullRequest] = relationship()
+    file_path: Mapped[FilePath] = relationship()
+    author: Mapped[User] = relationship(back_populates="comments")
+
+
 class PullRequestHunk(Base):
     __tablename__ = "pr_file_hunks"
     __table_args__ = (UniqueConstraint("pr_file_id", "hunk_index"),)
@@ -220,6 +290,146 @@ class RawPayload(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class StaticAnalysisSnapshot(Base):
+    __tablename__ = "static_analysis_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "repository_id",
+            "commit_sha",
+            "codeql_database_uri",
+            "query_pack_version",
+            name="uq_static_analysis_snapshot_identity",
+        ),
+        Index(
+            "idx_static_analysis_snapshots_repo_commit",
+            "repository_id",
+            "commit_sha",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    repository_id: Mapped[int] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False
+    )
+    commit_sha: Mapped[str] = mapped_column(Text, nullable=False)
+    codeql_database_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    query_pack_version: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        JSONB,
+        default=dict,
+        server_default=sql_text("'{}'::jsonb"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PullRequestCodeqlChange(Base):
+    __tablename__ = "pr_codeql_changes"
+    __table_args__ = (
+        Index("idx_pr_codeql_changes_pr", "pull_request_id"),
+        Index("idx_pr_codeql_changes_snapshot", "snapshot_id"),
+        Index("idx_pr_codeql_changes_symbol", "symbol_key"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    pull_request_id: Mapped[int] = mapped_column(
+        ForeignKey("pull_requests.id", ondelete="CASCADE"), nullable=False
+    )
+    file_path_id: Mapped[int] = mapped_column(
+        ForeignKey("file_paths.id", ondelete="CASCADE"), nullable=False
+    )
+    hunk_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pr_file_hunks.id", ondelete="SET NULL")
+    )
+    snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("static_analysis_snapshots.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol_key: Mapped[str] = mapped_column(Text, nullable=False)
+    symbol_name: Mapped[str] = mapped_column(Text, nullable=False)
+    symbol_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    change_type: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        JSONB,
+        default=dict,
+        server_default=sql_text("'{}'::jsonb"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class StaticImpactFinding(Base):
+    __tablename__ = "static_impact_findings"
+    __table_args__ = (
+        Index("idx_static_impact_findings_repo", "repository_id"),
+        Index("idx_static_impact_findings_pr", "pull_request_id"),
+        Index("idx_static_impact_findings_file", "file_path_id"),
+        Index("idx_static_impact_findings_snapshot", "snapshot_id"),
+        Index("idx_static_impact_findings_type", "finding_type"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    repository_id: Mapped[int] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False
+    )
+    pull_request_id: Mapped[int] = mapped_column(
+        ForeignKey("pull_requests.id", ondelete="CASCADE"), nullable=False
+    )
+    file_path_id: Mapped[int] = mapped_column(
+        ForeignKey("file_paths.id", ondelete="CASCADE"), nullable=False
+    )
+    snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("static_analysis_snapshots.id", ondelete="CASCADE"), nullable=False
+    )
+    finding_type: Mapped[str] = mapped_column(Text, nullable=False)
+    start_symbol_key: Mapped[str | None] = mapped_column(Text)
+    end_symbol_key: Mapped[str | None] = mapped_column(Text)
+    impact_path: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=sql_text("'[]'::jsonb"),
+        nullable=False,
+    )
+    affected_paths: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=sql_text("'[]'::jsonb"),
+        nullable=False,
+    )
+    affected_roles: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=sql_text("'[]'::jsonb"),
+        nullable=False,
+    )
+    related_tests: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=sql_text("'[]'::jsonb"),
+        nullable=False,
+    )
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    query_id: Mapped[str] = mapped_column(Text, nullable=False)
+    query_version: Mapped[str] = mapped_column(Text, nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        JSONB,
+        default=dict,
+        server_default=sql_text("'{}'::jsonb"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
